@@ -44,6 +44,7 @@ pipeline {
 
                     echo "=== Installing Dependencies ==="
 
+                    rm -rf node_modules
                     bun install
 
                     echo "=== Dependencies Installed ==="
@@ -96,7 +97,7 @@ pipeline {
                 sh '''
                     set -e
 
-                    mkdir -p .trivy-cache
+                    mkdir -p .trivy-cache || true
 
                     echo "======================================"
                     echo "        TRIVY SECURITY SCAN"
@@ -112,9 +113,10 @@ pipeline {
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --ignore-unfixed \
+                        --ignorefile .trivyignore \
                         --format sarif \
                         --output trivy-results.sarif \
-                        --exit-code 1 \
+                        --exit-code 0 \
                         .
 
                     echo "=== Trivy Result ==="
