@@ -217,9 +217,11 @@ pipeline {
                         -x ".docs/*"
 
                     echo "=== Application Package Created ==="
+
                     ls -lh latest-app.zip
 
                     echo "=== Package Content ==="
+
                     unzip -l latest-app.zip
                 '''
             }
@@ -229,10 +231,13 @@ pipeline {
         // PUBLISH APPLICATION
         // ============================================================
         stage('Publish Application') {
+
             steps {
+
                 // ========================================================
                 // 1. ARCHIVE ARTIFACT KE JENKINS
                 // ========================================================
+
                 archiveArtifacts(
                     artifacts: 'latest-app.zip',
                     fingerprint: true,
@@ -240,9 +245,11 @@ pipeline {
                 )
 
                 script {
+
                     // ====================================================
                     // 2. BUAT IDENTITAS APPLICATION
                     // ====================================================
+
                     def appName = env.JOB_NAME
                         .replaceAll('[^a-zA-Z0-9._-]', '-')
                         .replaceAll('-+', '-')
@@ -256,6 +263,7 @@ pipeline {
                     // ====================================================
                     // 3. COPY KE USER CONTENT
                     // ====================================================
+
                     sh """
                         set -e
 
@@ -272,6 +280,7 @@ pipeline {
                             "cicd-jenkins:/var/jenkins_home/userContent/applications/${appName}/${buildId}/latest-app.zip"
 
                         echo "=== Published File ==="
+
                         docker exec cicd-jenkins \
                             ls -lh \
                             "/var/jenkins_home/userContent/applications/${appName}/${buildId}/latest-app.zip"
@@ -280,6 +289,7 @@ pipeline {
                     // ====================================================
                     // 4. BUAT PUBLIC ARTIFACT URL
                     // ====================================================
+
                     def jenkinsBaseUrl = env.BUILD_URL
                         .substring(0, env.BUILD_URL.indexOf('/job/'))
                         .replace('localhost', 'host.docker.internal')
@@ -290,6 +300,7 @@ pipeline {
                     echo "======================================"
                     echo "       APPLICATION PUBLISHED"
                     echo "======================================"
+
                     echo "Artifact URL:"
                     echo "${env.ARTIFACT_URL}"
                 }
@@ -310,6 +321,7 @@ pipeline {
 
             steps {
                 script {
+
                     echo "=========================================="
                     echo "       START APPLICATION DEPLOYMENT"
                     echo "=========================================="
@@ -320,6 +332,7 @@ pipeline {
                     // ==================================================
                     // 1. REQUEST REDEPLOYMENT
                     // ==================================================
+
                     echo ""
                     echo "=== Request Redeployment ==="
 
@@ -346,6 +359,7 @@ pipeline {
                     // ==================================================
                     // 2. POLLING DEPLOYMENT PROGRESS
                     // ==================================================
+
                     echo ""
                     echo "=== Waiting For Deployment ==="
 
@@ -354,6 +368,7 @@ pipeline {
                     def deploymentStatus = 'IN_PROGRESS'
 
                     while (deploymentStatus == 'IN_PROGRESS') {
+
                         attempt++
 
                         if (attempt > maxAttempts) {
@@ -390,6 +405,7 @@ pipeline {
                         // ==================================================
                         // PARSE JSON
                         // ==================================================
+
                         def json = readJSON text: progressResponse
 
                         deploymentStatus = json?.data?.status
@@ -407,18 +423,23 @@ pipeline {
                         // ==================================================
                         // SUCCESS
                         // ==================================================
+
                         if (deploymentStatus == 'SUCCESS') {
+
                             echo ""
                             echo "=========================================="
                             echo "       ✅ DEPLOYMENT SUCCESS"
                             echo "=========================================="
+
                             break
                         }
 
                         // ==================================================
                         // FAIL
                         // ==================================================
+
                         if (deploymentStatus == 'FAIL') {
+
                             echo ""
                             echo "=========================================="
                             echo "       ❌ DEPLOYMENT FAILED"
@@ -442,6 +463,7 @@ pipeline {
                         // ==================================================
                         // OTHER STATUS
                         // ==================================================
+
                         echo "Deployment masih berjalan..."
                     }
 
@@ -458,6 +480,7 @@ pipeline {
     // POST ACTIONS
     // ================================================================
     post {
+
         always {
             archiveArtifacts(
                 artifacts: 'trivy-results.sarif',
