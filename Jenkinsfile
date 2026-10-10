@@ -368,6 +368,7 @@ pipeline {
                     def deploymentStatus = 'IN_PROGRESS'
 
                     while (deploymentStatus == 'IN_PROGRESS') {
+
                         attempt++
 
                         if (attempt > maxAttempts) {
@@ -424,10 +425,12 @@ pipeline {
                         // ==================================================
 
                         if (deploymentStatus == 'SUCCESS') {
+
                             echo ""
                             echo "=========================================="
                             echo "       ✅ DEPLOYMENT SUCCESS"
                             echo "=========================================="
+
                             break
                         }
 
@@ -436,6 +439,7 @@ pipeline {
                         // ==================================================
 
                         if (deploymentStatus == 'FAIL') {
+
                             echo ""
                             echo "=========================================="
                             echo "       ❌ DEPLOYMENT FAILED"
@@ -476,6 +480,7 @@ pipeline {
     // POST ACTIONS
     // ================================================================
     post {
+
         always {
             archiveArtifacts(
                 artifacts: 'trivy-results.sarif',
