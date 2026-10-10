@@ -1,4 +1,4 @@
-# simple-git 3.x - fixed in 4.0.0 but not compatible with @nuxt/devtools yet
+# simple-git (transitive via @nuxt/devtools) - fixed upstream in 4.x but breaks Nuxt import
 GHSA-858h-whjf-mvg5
 GHSA-g4wm-2vf7-vfgr
 GHSA-x6jw-m9v5-85vh
@@ -6,6 +6,9 @@ CVE-2026-102827
 CVE-2026-102826
 CVE-2026-102828
 
-# node-forge - no patched version available yet
+# node-forge (transitive via listhen) - no patched version yet
 GHSA-86w9-cpqp-85rv
 CVE-2026-85393
+
+# catch residual / alias IDs
+CVE-2026-28291
