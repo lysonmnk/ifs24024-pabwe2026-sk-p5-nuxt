@@ -1,15 +1,15 @@
 pipeline {
-
     agent any
-
     options {
         timestamps()
         skipDefaultCheckout(true)
+        // Stop later stages if a publisher marks the build UNSTABLE/FAILURE mid-run
         skipStagesAfterUnstable()
     }
-
     stages {
-
+        // ============================================================
+        // CHECKOUT
+        // ============================================================
         stage('Checkout') {
             agent {
                 docker {
@@ -17,12 +17,13 @@ pipeline {
                     reuseNode true
                 }
             }
-
             steps {
                 checkout scm
             }
         }
-
+        // ============================================================
+        // INSTALL DEPENDENCIES
+        // ============================================================
         stage('Install Dependencies') {
             agent {
                 docker {
@@ -30,7 +31,6 @@ pipeline {
                     reuseNode true
                 }
             }
-
             steps {
                 sh '''
                     set -e
@@ -40,7 +40,9 @@ pipeline {
                 '''
             }
         }
-
+        // ============================================================
+        // TEST
+        // ============================================================
         stage('Test') {
             agent {
                 docker {
@@ -48,7 +50,6 @@ pipeline {
                     reuseNode true
                 }
             }
-
             steps {
                 sh '''
                     set -e
@@ -58,7 +59,9 @@ pipeline {
                 '''
             }
         }
-
+        // ============================================================
+        // TRIVY SECURITY SCAN
+        // ============================================================
         stage('Trivy Security Scan') {
             agent {
                 docker {
@@ -71,7 +74,6 @@ pipeline {
                     '''
                 }
             }
-
             steps {
                 sh '''
                     set -e
@@ -79,23 +81,26 @@ pipeline {
                     echo "======================================"
                     echo "        TRIVY SECURITY SCAN"
                     echo "======================================"
+                    echo "=== Trivy Version ==="
                     trivy --version
+                    echo "=== Trivy Scan ==="
                     trivy fs \
                         --cache-dir .trivy-cache \
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
-                        --ignore-unfixed \
-                        --ignorefile .trivyignore \
                         --format sarif \
                         --output trivy-results.sarif \
-                        --exit-code 0 \
+                        --exit-code 1 \
                         .
+                    echo "=== Trivy Result ==="
                     ls -lh trivy-results.sarif
                 '''
             }
-
             post {
                 always {
+                    // failOnError must be false: otherwise Warnings NG can mark the
+                    // whole build FAILURE while later stages still run (all green, badge red).
+                    // Build failure on HIGH/CRITICAL comes from trivy --exit-code 1 above.
                     recordIssues(
                         enabledForFailure: true,
                         failOnError: false,
@@ -110,7 +115,9 @@ pipeline {
                 }
             }
         }
-
+        // ============================================================
+        // SONARQUBE ANALYSIS
+        // ============================================================
         stage('SonarQube Analysis') {
             agent {
                 docker {
@@ -119,7 +126,6 @@ pipeline {
                     args '--network cicd-network'
                 }
             }
-
             steps {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
@@ -131,7 +137,9 @@ pipeline {
                 }
             }
         }
-
+        // ============================================================
+        // QUALITY GATE
+        // ============================================================
         stage('Quality Gate') {
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
@@ -139,7 +147,9 @@ pipeline {
                 }
             }
         }
-
+        // ============================================================
+        // PACKAGE APPLICATION
+        // ============================================================
         stage('Package Application') {
             agent {
                 docker {
@@ -148,52 +158,226 @@ pipeline {
                     args '-u root'
                 }
             }
-
             steps {
                 sh '''
                     set -e
                     echo "======================================"
                     echo "       CREATING APPLICATION PACKAGE"
                     echo "======================================"
-                    npm run build
-                    echo "=== Package Created ==="
+                    apk add --no-cache zip unzip
+                    rm -f latest-app.zip
+                    zip -r latest-app.zip . \
+                        -x "node_modules/*" \
+                        -x ".git/*" \
+                        -x ".env" \
+                        -x ".env.*" \
+                        -x "coverage/*" \
+                        -x ".next/*" \
+                        -x "out/*" \
+                        -x ".trivy-cache/*" \
+                        -x "latest-app.zip" \
+                        -x "trivy-results.sarif" \
+                        -x ".docs/*"
+                    echo "=== Application Package Created ==="
+                    ls -lh latest-app.zip
+                    echo "=== Package Content ==="
+                    unzip -l latest-app.zip
                 '''
             }
         }
-
+        // ============================================================
+        // PUBLISH APPLICATION
+        // ============================================================
         stage('Publish Application') {
-            agent {
-                docker {
-                    image 'node:24-alpine'
-                    reuseNode true
+            steps {
+                // ========================================================
+                // 1. ARCHIVE ARTIFACT KE JENKINS
+                // ========================================================
+                archiveArtifacts(
+                    artifacts: 'latest-app.zip',
+                    fingerprint: true,
+                    allowEmptyArchive: false
+                )
+                script {
+                    // ====================================================
+                    // 2. BUAT IDENTITAS APPLICATION
+                    // ====================================================
+                    def appName = env.JOB_NAME
+                        .replaceAll('[^a-zA-Z0-9._-]', '-')
+                        .replaceAll('-+', '-')
+                        .replaceAll('^-|-$', '')
+                    def buildId = env.BUILD_NUMBER
+                    echo "Application Name: ${appName}"
+                    echo "Build ID: ${buildId}"
+                    // ====================================================
+                    // 3. COPY KE USER CONTENT
+                    // ====================================================
+                    sh """
+                        set -e
+                        echo "======================================"
+                        echo "       PUBLISHING USER CONTENT"
+                        echo "======================================"
+                        docker exec cicd-jenkins \
+                            mkdir -p \
+                            "/var/jenkins_home/userContent/applications/${appName}/${buildId}"
+                        docker cp \
+                            latest-app.zip \
+                            "cicd-jenkins:/var/jenkins_home/userContent/applications/${appName}/${buildId}/latest-app.zip"
+                        echo "=== Published File ==="
+                        docker exec cicd-jenkins \
+                            ls -lh \
+                            "/var/jenkins_home/userContent/applications/${appName}/${buildId}/latest-app.zip"
+                    """
+                    // ====================================================
+                    // 4. BUAT PUBLIC ARTIFACT URL
+                    // ====================================================
+                    def jenkinsBaseUrl = env.BUILD_URL
+                        .substring(0, env.BUILD_URL.indexOf('/job/'))
+                        .replace('localhost', 'host.docker.internal')
+                    env.ARTIFACT_URL =
+                        "${jenkinsBaseUrl}/userContent/applications/${appName}/${buildId}/latest-app.zip"
+                    echo "======================================"
+                    echo "       APPLICATION PUBLISHED"
+                    echo "======================================"
+                    echo "Artifact URL:"
+                    echo "${env.ARTIFACT_URL}"
                 }
             }
-
-            steps {
-                sh '''
-                    set -e
-                    echo "Publish step (placeholder)"
-                '''
-            }
         }
-
+        // ============================================================
+        // DEPLOY APPLICATION
+        // ============================================================
         stage('Deploy Application') {
             agent {
                 docker {
-                    image 'node:24-alpine'
+                    image 'curlimages/curl:8.15.0'
                     reuseNode true
+                    args '--network cicd-network'
                 }
             }
-
             steps {
-                sh '''
-                    set -e
-                    echo "Deploy step (placeholder)"
-                '''
+                script {
+                    echo "=========================================="
+                    echo "       START APPLICATION DEPLOYMENT"
+                    echo "=========================================="
+                    echo "Artifact URL:"
+                    echo "${env.ARTIFACT_URL}"
+                    // ==================================================
+                    // 1. REQUEST REDEPLOYMENT
+                    // ==================================================
+                    echo ""
+                    echo "=== Request Redeployment ==="
+                    def redeployResponse = sh(
+                        script: '''
+                            set -e
+                            curl -sS --fail-with-body \
+                                -X POST "$URL_REDEPLOY" \
+                                -H "Content-Type: application/json" \
+                                -d "{
+                                    \\"token_access\\": \\"$DEPLOY_TOKEN\\",
+                                    \\"website_id\\": \\"$WEBSITE_ID\\",
+                                    \\"source_url\\": \\"$ARTIFACT_URL\\",
+                                    \\"source_type\\": \\"jenkins\\"
+                                }"
+                        ''',
+                        returnStdout: true
+                    ).trim()
+                    echo "Redeploy Response:"
+                    echo redeployResponse
+                    // ==================================================
+                    // 2. POLLING DEPLOYMENT PROGRESS
+                    // ==================================================
+                    echo ""
+                    echo "=== Waiting For Deployment ==="
+                    def maxAttempts = 120
+                    def attempt = 0
+                    def deploymentStatus = 'IN_PROGRESS'
+                    while (deploymentStatus == 'IN_PROGRESS') {
+                        attempt++
+                        if (attempt > maxAttempts) {
+                            error(
+                                "Deployment timeout. " +
+                                "Status masih IN_PROGRESS setelah " +
+                                "${maxAttempts} attempts."
+                            )
+                        }
+                        sleep time: 5, unit: 'SECONDS'
+                        echo ""
+                        echo "=== Checking Deployment Progress (${attempt}/${maxAttempts}) ==="
+                        def progressResponse = sh(
+                            script: '''
+                                set -e
+                                curl -sS --fail-with-body \
+                                    -X POST "$URL_PROGRESS" \
+                                    -H "Content-Type: application/json" \
+                                    -d "{
+                                        \\"token_access\\": \\"$DEPLOY_TOKEN\\",
+                                        \\"website_id\\": \\"$WEBSITE_ID\\"
+                                    }"
+                            ''',
+                            returnStdout: true
+                        ).trim()
+                        echo "Progress Response:"
+                        echo progressResponse
+                        // ==================================================
+                        // PARSE JSON
+                        // ==================================================
+                        def json = readJSON text: progressResponse
+                        deploymentStatus = json?.data?.status
+                            ?.toString()
+                            ?.toUpperCase()
+                        if (!deploymentStatus) {
+                            error(
+                                "Response progress tidak memiliki data.status"
+                            )
+                        }
+                        echo "Deployment Status: ${deploymentStatus}"
+                        // ==================================================
+                        // SUCCESS
+                        // ==================================================
+                        if (deploymentStatus == 'SUCCESS') {
+                            echo ""
+                            echo "=========================================="
+                            echo "       ✅ DEPLOYMENT SUCCESS"
+                            echo "=========================================="
+                            break
+                        }
+                        // ==================================================
+                        // FAIL
+                        // ==================================================
+                        if (deploymentStatus == 'FAIL') {
+                            echo ""
+                            echo "=========================================="
+                            echo "       ❌ DEPLOYMENT FAILED"
+                            echo "=========================================="
+                            def deploymentLog =
+                                json?.data?.log
+                                    ?: 'Deployment failed tanpa log.'
+                            echo ""
+                            echo "========== DEPLOYMENT LOG =========="
+                            echo deploymentLog
+                            echo "===================================="
+                            error(
+                                "Deployment gagal untuk website " +
+                                "${WEBSITE_ID}"
+                            )
+                        }
+                        // ==================================================
+                        // OTHER STATUS
+                        // ==================================================
+                        echo "Deployment masih berjalan..."
+                    }
+                    echo ""
+                    echo "=========================================="
+                    echo "       DEPLOYMENT FINISHED"
+                    echo "=========================================="
+                }
             }
         }
     }
-
+    // ================================================================
+    // POST ACTIONS
+    // ================================================================
     post {
         always {
             archiveArtifacts(
@@ -206,10 +390,19 @@ pipeline {
             echo "       ✅ PIPELINE SUCCESS"
             echo "=========================================="
             echo "Result: ${currentBuild.currentResult}"
+            echo "📦 Artifact: ${env.ARTIFACT_URL ?: '(not published)'}"
+            echo "🚀 Website berhasil dideploy."
         }
         failure {
             echo "=========================================="
             echo "       ❌ PIPELINE FAILED"
+            echo "=========================================="
+            echo "Result: ${currentBuild.currentResult}"
+            echo "Periksa log stage yang merah / Console Output untuk penyebab gagal."
+        }
+        unstable {
+            echo "=========================================="
+            echo "       ⚠️ PIPELINE UNSTABLE"
             echo "=========================================="
             echo "Result: ${currentBuild.currentResult}"
         }
