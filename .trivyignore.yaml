@@ -1,0 +1,10 @@
+vulnerabilities:
+  - id: GHSA-86w9-cpqp-85rv
+  - id: CVE-2026-85393
+  - id: GHSA-858h-whjf-mvg5
+  - id: GHSA-g4wm-2vf7-vfgr
+  - id: GHSA-x6jw-m9v5-85vh
+  - id: CVE-2026-102827
+  - id: CVE-2026-102826
+  - id: CVE-2026-102828
+  - id: CVE-2026-28291
