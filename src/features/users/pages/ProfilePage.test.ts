@@ -101,9 +101,20 @@ describe("ProfilePage", () => {
     const { wrapper, spies } = await setup({ profile });
 
     await wrapper.find("#profile-name").setValue(" Nama Baru ");
+    await wrapper.find("#profile-email").setValue(" baru@del.ac.id ");
     await wrapper.find("[data-testid=profile-form]").trigger("submit");
 
-    expect(spies.changeProfile).toHaveBeenCalledWith("Nama Baru", "ifs18005@del.ac.id");
+    expect(spies.changeProfile).toHaveBeenCalledWith("Nama Baru", "baru@del.ac.id");
+  });
+
+  it("menolak simpan profil bila email kosong", async () => {
+    const { wrapper, spies } = await setup({ profile });
+
+    await wrapper.find("#profile-email").setValue("   ");
+    await wrapper.find("[data-testid=profile-form]").trigger("submit");
+
+    expect(showErrorDialog).toHaveBeenCalledWith("Nama dan email wajib diisi");
+    expect(spies.changeProfile).not.toHaveBeenCalled();
   });
 
   it("mengabaikan pemilihan foto bila files null atau kosong", async () => {
