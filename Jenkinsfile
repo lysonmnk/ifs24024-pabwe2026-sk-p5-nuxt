@@ -44,7 +44,6 @@ pipeline {
 
                     echo "=== Installing Dependencies ==="
 
-                    rm -rf node_modules
                     bun install
 
                     echo "=== Dependencies Installed ==="
@@ -126,9 +125,6 @@ pipeline {
 
             post {
                 always {
-                    // failOnError must be false: otherwise Warnings NG can mark the
-                    // whole build FAILURE while later stages still run (all green, badge red).
-                    // Build failure on HIGH/CRITICAL comes from trivy --exit-code 1 above.
                     recordIssues(
                         enabledForFailure: true,
                         failOnError: false,
@@ -258,9 +254,6 @@ pipeline {
         }
     }
 
-    // ================================================================
-    // POST ACTIONS
-    // ================================================================
     post {
 
         always {
@@ -275,8 +268,6 @@ pipeline {
             echo "       ✅ PIPELINE SUCCESS"
             echo "=========================================="
             echo "Result: ${currentBuild.currentResult}"
-            echo "📦 Artifact: ${env.ARTIFACT_URL ?: '(not published)'}"
-            echo "🚀 Website berhasil dideploy."
         }
 
         failure {
